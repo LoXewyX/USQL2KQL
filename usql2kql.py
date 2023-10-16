@@ -15,7 +15,8 @@ import time
 # También puedes cambiarle el nombre del output:
 # `python usql2kql.py **archivo.usql** **salida.kql**`
 
-parser = argparse.ArgumentParser(prog="USQL2KQL", description="Convert U-SQL to KQL")
+parser = argparse.ArgumentParser(
+    prog="USQL2KQL", description="Convert U-SQL to KQL")
 parser.add_argument("input_file", type=str, help="Input U-SQL file")
 parser.add_argument(
     "output_file", nargs="?", type=str, default=None, help="Output KQL file"
@@ -41,7 +42,7 @@ if __name__ == "__main__":
         # Clean code from comments and undesired comments
         def process_list(input_list):
             return "\n".join(
-                item.split("//", 1)[0]
+                item
                 .replace("==", " == ")
                 .replace("+", " + ")
                 .replace("-", " - ")
@@ -52,7 +53,10 @@ if __name__ == "__main__":
                 for item in input_list
                 if item.strip()
             )
-
+        # Remove multiline comments
+        code = re.sub(r'/\*.*?\*/', '', code, flags=re.DOTALL)
+        # Remove inline comments
+        code = re.sub(r'//.*?$', '', code, flags=re.MULTILINE)
         code = process_list(code.split("\n"))
 
         # Define the list of keywords
@@ -107,12 +111,14 @@ if __name__ == "__main__":
             }
 
             # Get FROM statement
-            from_pattern = re.compile(r"FROM (@?\w+) AS (\w+)", re.IGNORECASE)
+            from_pattern = re.compile(
+                r"FROM (@?\w+)(?: AS (\w+))?", re.IGNORECASE)
             from_match = from_pattern.search(aligned_query)
             if from_match:
                 main_table = from_match.group(1)
                 main_table = main_table.lstrip("@")
-                as_name = from_match.group(2)
+                # Set to empty string if None
+                as_name = from_match.group(2) or ""
                 sql_props["main_table"] = main_table
                 sql_props["as"] = as_name
 
@@ -143,25 +149,29 @@ if __name__ == "__main__":
                             r"WHERE (.*)", line, re.IGNORECASE | re.DOTALL
                         )
                         if where_condition:
-                            sql_props["body"]["where"] = where_condition.group(1)
+                            sql_props["body"]["where"] = where_condition.group(
+                                1)
                     elif "ORDER BY" == kw:
                         order_condition = re.search(
                             r"ORDER BY (.*)", line, re.IGNORECASE | re.DOTALL
                         )
                         if order_condition:
-                            sql_props["body"]["order"] = order_condition.group(1)
+                            sql_props["body"]["order"] = order_condition.group(
+                                1)
                     elif "GROUP BY" == kw:
                         union_condition = re.search(
                             r"GROUP BY (.*)", line, re.IGNORECASE | re.DOTALL
                         )
                         if union_condition:
-                            sql_props["body"]["summarize"] = union_condition.group(1)
+                            sql_props["body"]["summarize"] = union_condition.group(
+                                1)
                     elif "UNION" == kw:
                         union_condition = re.search(
                             r"UNION (.*)", line, re.IGNORECASE | re.DOTALL
                         )
                         if union_condition:
-                            sql_props["body"]["union"] = union_condition.group(1)
+                            sql_props["body"]["union"] = union_condition.group(
+                                1)
 
                 select_pattern = re.compile(
                     r"SELECT (.*?)(?:FROM|$)", re.IGNORECASE | re.DOTALL
@@ -245,7 +255,7 @@ if __name__ == "__main__":
                             start_index = sentence_data[j].find("[")
                             end_index = sentence_data[j].find("]")
                             text_inside_brackets = sentence_data[j][
-                                start_index + 1 : end_index
+                                start_index + 1: end_index
                             ]
 
                             # Replace the brackets and the text inside with just the text inside
@@ -305,7 +315,8 @@ if __name__ == "__main__":
                     if assignment_match:
                         result_column = assignment_match.group(1)
                         case_column = assignment_match.group(2)
-                        pattern = re.compile(r'WHEN\s+(\S+)\s+THEN\s+("([^"]*)"|\S+)')
+                        pattern = re.compile(
+                            r'WHEN\s+(\S+)\s+THEN\s+("([^"]*)"|\S+)')
                         when_then_matches = pattern.findall(input_string)
 
                         cases = tab * 2 + f",\n{tab*3}".join(
@@ -323,7 +334,8 @@ if __name__ == "__main__":
                     namify = case(namify)
 
                 namify = re.sub(r"\(decimal\)(\d+)", r"todecimal(\1)", namify)
-                namify = re.sub(r"\(decimal\?\)(\d+)", r"todecimal(\1)", namify)
+                namify = re.sub(r"\(decimal\?\)(\d+)",
+                                r"todecimal(\1)", namify)
 
                 # Replace function keys
                 function_mapping = {
@@ -354,7 +366,8 @@ if __name__ == "__main__":
                     return match.group(0)
 
                 # Define the regex pattern for matching the specified format
-                pattern = re.compile(r"(\[?\'?[^\'\]]+\'?\]?)\.(\w+)\(([^)]+)\)")
+                pattern = re.compile(
+                    r"(\[?\'?[^\'\]]+\'?\]?)\.(\w+)\(([^)]+)\)")
 
                 # Use the sub method to replace matches according to the defined function
                 namify = pattern.sub(replace_match, namify)
@@ -365,14 +378,17 @@ if __name__ == "__main__":
                     condition_part = parts[1].split(":")
                     return (
                         "iff("
-                        + ", ".join([parts[0], condition_part[0], condition_part[1]])
+                        + ", ".join([parts[0], condition_part[0],
+                                    condition_part[1]])
                         + ")"
                     )
 
-                if "?" in namify and ":" in namify :namify = modify_code(namify)
+                if "?" in namify and ":" in namify:
+                    namify = modify_code(namify)
 
                 project_kql_output += (
-                    tab * 2 + namify + (",\n" if len(namify_array) != i + 1 else "\n;")
+                    tab * 2 + namify +
+                    (",\n" if len(namify_array) != i + 1 else "\n;")
                 )
 
         # Body
@@ -392,7 +408,7 @@ if __name__ == "__main__":
 
                     cond_text = f"AS {j_as} ON "
                     if j_on.startswith(cond_text):
-                        join["on"] = j_on[len(cond_text) :]
+                        join["on"] = j_on[len(cond_text):]
                         j_on = join["on"]
 
                     # Removes square brackets
@@ -443,7 +459,7 @@ if __name__ == "__main__":
                         for i, key in enumerate(project_keys):
                             join_kql_output += (
                                 f"{tab*3}['{key}']="
-                                + key[len(j_as) + 1 :]
+                                + key[len(j_as) + 1:]
                                 + ("" if len(project_keys) == i + 1 else ",")
                                 + "\n"
                             )
@@ -458,13 +474,13 @@ if __name__ == "__main__":
 
                     join_project_keys = []
 
-                    def format_line(text, main_table):
-                        # Replace main_table with the table itself
-                        text = re.sub(r"\b" + main_table + r"\.", "", text)
+                    def format_line(text, tab):
+                        if tab != "":
+                            text = re.sub(r"\b" + tab + r"\.", "", text)
                         join_project_keys.extend(re.split(r"\s*==\s*", text))
                         left, right = re.split(r"\s*==\s*", text)
 
-                        if not re.match(r"{main_table}\.\w+$", text) or re.match(
+                        if not re.match(r"{tab}\.\w+$", text) or re.match(
                             r"^{curr_table}\.\w+", text
                         ):
                             temp = right
@@ -508,16 +524,17 @@ if __name__ == "__main__":
                             if not key in project_keys:
                                 join_kql_output += (
                                     f"{tab*3}['{key}']="
-                                    + key[len(j_as) + 1 :]
-                                    + ("" if len(join_project_keys) == i + 1 else ",")
+                                    + key[len(j_as) + 1:]
+                                    + ("" if len(join_project_keys)
+                                       == i + 1 else ",")
                                     + "\n"
                                 )
                     if len(project_keys) > 0 or len(join_project_keys) > 0:
                         join_kql_output += f"{tab}) "
                     join_kql_output += f"on {j_on}\n"
             elif type == "where":
-                content = content.replace(" AND ", " and ").replace(" OR ", " or ")
-
+                content = content.replace(
+                    " AND ", " and ").replace(" OR ", " or ")
                 where_kql_output += f"{tab}| where\n{tab*2}{content}\n"
             elif type == "order":
                 order_kql_output += f"{tab}| sort by {content}\n".replace(
@@ -541,16 +558,21 @@ if __name__ == "__main__":
         summarize_by_kql_output += "\n" if summarize_by_kql_output else ""
 
         # Print order
-        kql_output += (
-            f"{main_table}" + (f" // {short_table}" if short_table else "") + "\n"
-        )
-        kql_output += join_kql_output
-        kql_output += where_kql_output
-        kql_output += order_kql_output
-        kql_output += summarize_kql_output + summarize_by_kql_output
-        kql_output += union_kql_output
-        kql_output += project_kql_output
-        kql_output += "\n"
+        
+        if main_table == "":
+            kql_output = "// NO TABLE WAS FOUND\n"
+        else:
+            kql_output += (
+                f"{main_table}" +
+                (f" // {short_table}" if short_table else "") + "\n"
+            )
+            kql_output += join_kql_output
+            kql_output += where_kql_output
+            kql_output += order_kql_output
+            kql_output += summarize_kql_output + summarize_by_kql_output
+            kql_output += union_kql_output
+            kql_output += project_kql_output
+            kql_output += "\n"
 
         with open(output_file, "a") as f:
             f.write(kql_output)
