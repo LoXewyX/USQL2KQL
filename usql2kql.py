@@ -41,7 +41,16 @@ if __name__ == "__main__":
         # Clean code from comments and undesired comments
         def process_list(input_list):
             return "\n".join(
-                item.split("//", 1)[0].strip() for item in input_list if item.strip()
+                item.split("//", 1)[0]
+                .replace("==", " == ")
+                .replace("+", " + ")
+                .replace("-", " - ")
+                .replace("*", " * ")
+                .replace("/", " / ")
+                .replace(":", " : ")
+                .strip()
+                for item in input_list
+                if item.strip()
             )
 
         code = process_list(code.split("\n"))
@@ -158,19 +167,51 @@ if __name__ == "__main__":
                     r"SELECT (.*?)(?:FROM|$)", re.IGNORECASE | re.DOTALL
                 )
                 select_match = select_pattern.search(line)
+
                 if select_match:
-                    select_items = re.findall(
-                        r"\s*([^,]+(?:\([^)]*\))?)\s* AS \s*(\w+)?|([^,]+)",
-                        select_match.group(1),
+
+                    def split_with_parentheses(s):
+                        result = []
+                        stack = []
+                        current = []
+
+                        for char in s:
+                            if char == "," and not stack:
+                                result.append("".join(current).strip())
+                                current = []
+                            else:
+                                current.append(char)
+                                if char == "(":
+                                    stack.append("(")
+                                elif char == ")" and stack:
+                                    stack.pop()
+
+                        if current:
+                            result.append("".join(current).strip())
+
+                        return result
+
+                    def extract_columns_and_aliases(input_string):
+                        chunks = split_with_parentheses(input_string)
+
+                        result = []
+                        for chunk in chunks:
+                            # Split at " AS " and capture both sides
+                            split_chunk = re.split(r"\s+AS\s+", chunk)
+
+                            if len(split_chunk) == 1:
+                                result.append([split_chunk[0]])
+                            elif len(split_chunk) == 2:
+                                result.append([split_chunk[0], split_chunk[1]])
+                            else:
+                                result.append([chunk])
+
+                        return result
+
+                    sql_props["select"] = extract_columns_and_aliases(
+                        select_match.group(1)
                     )
-                    sql_props["select"] = [
-                        subarray
-                        for subarray in [
-                            list(filter(None, [i.strip() for i in item]))
-                            for item in select_items
-                        ]
-                        if any(element.strip() for element in subarray)
-                    ]
+
             return sql_props
 
         sql_props = parse_sql(aligned_query)
@@ -190,7 +231,7 @@ if __name__ == "__main__":
 
         # Project
         sum_list = []
-        if select is not None:
+        if select is not []:
             project_kql_output = ""
             project_kql_output += f"{tab}| project\n"
 
@@ -199,7 +240,6 @@ if __name__ == "__main__":
                     sentence_data = sentence_list[i]
 
                     for j in range(len(sentence_data)):
-                        # Check if the element has both "[" and "]"
                         if "[" in sentence_data[j] and "]" in sentence_data[j]:
                             # Extract the text inside brackets
                             start_index = sentence_data[j].find("[")
@@ -225,7 +265,6 @@ if __name__ == "__main__":
             for i, namify in enumerate(namify_array):
                 # Regex patterns
                 def coalesce(input_str):
-                    # Replace '?? 0' with ', 0)' or '?? "NULL"' with ', "NULL")'
                     return re.sub(
                         r'(\[?[\'"]?[\w\.]+[\'"]?\]?)\s*\?\?\s*(\S+)',
                         r"coalesce(\1, \2)",
@@ -274,10 +313,8 @@ if __name__ == "__main__":
                             for when, result, _ in when_then_matches
                         )
 
-                        return (
-                            tab
-                            + result_column
-                            + " = case(\n{}\n{})".format(tab + cases, tab * 2)
+                        return result_column + " = case(\n{}\n{})".format(
+                            tab + cases, tab * 2
                         )
                     else:
                         return "Invalid input: Unable to determine column name"
@@ -285,8 +322,15 @@ if __name__ == "__main__":
                 if all(string in namify for string in ("CASE", "WHEN", "THEN")):
                     namify = case(namify)
 
+                namify = re.sub(r"\(decimal\)(\d+)", r"todecimal(\1)", namify)
+                namify = re.sub(r"\(decimal\?\)(\d+)", r"todecimal(\1)", namify)
+
                 # Replace function keys
-                function_mapping = {"CONCAT": "strcat", "SUBSTRING": "substring"}
+                function_mapping = {
+                    "CONCAT": "strcat",
+                    "SUBSTRING": "substring",
+                    "String.Concat": "strcat",
+                }
                 pattern = re.compile(
                     r"\b(" + "|".join(function_mapping.keys()) + r")\b"
                 )
@@ -294,6 +338,38 @@ if __name__ == "__main__":
                     lambda x: function_mapping[x.group()], namify
                 )
                 namify = re.sub(r"\s*\(\s*", "(", replaced_string)
+
+                for v in function_mapping.values():
+                    namify = namify.replace(f"['{v}']", v)
+
+                # Special functions
+                def replace_match(match):
+                    if match.group(2) == "Substring":
+                        if match.group(1).startswith(", "):
+                            return (
+                                f", substring({match.group(1)[2:]}, {match.group(3)})"
+                            )
+                        else:
+                            return f"substring({match.group(1)}, {match.group(3)})"
+                    return match.group(0)
+
+                # Define the regex pattern for matching the specified format
+                pattern = re.compile(r"(\[?\'?[^\'\]]+\'?\]?)\.(\w+)\(([^)]+)\)")
+
+                # Use the sub method to replace matches according to the defined function
+                namify = pattern.sub(replace_match, namify)
+
+                # Conditional operator
+                def modify_code(original_code):
+                    parts = original_code.split("?")
+                    condition_part = parts[1].split(":")
+                    return (
+                        "iff("
+                        + ", ".join([parts[0], condition_part[0], condition_part[1]])
+                        + ")"
+                    )
+
+                if "?" in namify and ":" in namify :namify = modify_code(namify)
 
                 project_kql_output += (
                     tab * 2 + namify + (",\n" if len(namify_array) != i + 1 else "\n;")
@@ -313,6 +389,11 @@ if __name__ == "__main__":
                     j_table = join["table"]
                     j_as = join["as"]
                     j_on = join["on"]
+
+                    cond_text = f"AS {j_as} ON "
+                    if j_on.startswith(cond_text):
+                        join["on"] = j_on[len(cond_text) :]
+                        j_on = join["on"]
 
                     # Removes square brackets
                     def extract_table(input_string):
@@ -435,6 +516,8 @@ if __name__ == "__main__":
                         join_kql_output += f"{tab}) "
                     join_kql_output += f"on {j_on}\n"
             elif type == "where":
+                content = content.replace(" AND ", " and ").replace(" OR ", " or ")
+
                 where_kql_output += f"{tab}| where\n{tab*2}{content}\n"
             elif type == "order":
                 order_kql_output += f"{tab}| sort by {content}\n".replace(
@@ -455,10 +538,12 @@ if __name__ == "__main__":
                     ", " if len(sum_list) > i + 1 else " "
                 )
             sum_list = []
-        summarize_by_kql_output += "\n"
+        summarize_by_kql_output += "\n" if summarize_by_kql_output else ""
 
         # Print order
-        kql_output += f"{main_table} // {short_table}\n"
+        kql_output += (
+            f"{main_table}" + (f" // {short_table}" if short_table else "") + "\n"
+        )
         kql_output += join_kql_output
         kql_output += where_kql_output
         kql_output += order_kql_output
