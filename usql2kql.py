@@ -36,10 +36,18 @@ if __name__ == "__main__":
     # Overwrite the code in case it's not empty
     with open(output_file, "w") as f:
         f.write("")
+        
+    # Remove multiline comments
+    input_code = re.sub(r'/\*.*?\*/', '', input_code, flags=re.DOTALL)
+    # Remove inline comments
+    input_code = re.sub(r'//.*?$', '', input_code, flags=re.MULTILINE)
 
     input_code = input_code.split(";")[:-1]
+    
+    # Sanitize empty lines
+    input_code = [item for item in input_code if item != ""]
+    
     for code in input_code:
-        # Clean code from comments and undesired comments
         def process_list(input_list):
             return "\n".join(
                 item
@@ -53,10 +61,6 @@ if __name__ == "__main__":
                 for item in input_list
                 if item.strip()
             )
-        # Remove multiline comments
-        code = re.sub(r'/\*.*?\*/', '', code, flags=re.DOTALL)
-        # Remove inline comments
-        code = re.sub(r'//.*?$', '', code, flags=re.MULTILINE)
         code = process_list(code.split("\n"))
 
         # Define the list of keywords
@@ -99,8 +103,11 @@ if __name__ == "__main__":
             # Split the line into tokens
             len_jt = join_type.split(" ")
             len_jt = len(len_jt)
-            join_str.split(" ")[len_jt]
-            return join_str.split(" ")[len_jt].replace("@", "")
+            jt = join_str.split(" ")[len_jt]
+            
+            pattern = re.compile(r'(?:\[)?(\w+)(?:\])?(?:\.(\[)?(\w+)(?:\])?)*')
+            result = pattern.search(jt)
+            return result.group(result.lastindex) if result else None
 
         def parse_sql(aligned_query):
             sql_props = {
@@ -112,14 +119,19 @@ if __name__ == "__main__":
 
             # Get FROM statement
             from_pattern = re.compile(
-                r"FROM (@?\w+)(?: AS (\w+))?", re.IGNORECASE)
+                r"FROM (@?.+)(?: AS (\w+))", re.IGNORECASE)
             from_match = from_pattern.search(aligned_query)
             if from_match:
                 main_table = from_match.group(1)
                 main_table = main_table.lstrip("@")
+                
+                pattern = re.compile(r'(?:\[)?(\w+)(?:\])?(?:\.(\[)?(\w+)(?:\])?)*')
+                result = pattern.search(main_table)
+                new_main_table = result.group(result.lastindex) if result else None
+                 
                 # Set to empty string if None
                 as_name = from_match.group(2) or ""
-                sql_props["main_table"] = main_table
+                sql_props["main_table"] = new_main_table
                 sql_props["as"] = as_name
 
             # Get OTHER statement
@@ -333,9 +345,7 @@ if __name__ == "__main__":
                 if all(string in namify for string in ("CASE", "WHEN", "THEN")):
                     namify = case(namify)
 
-                namify = re.sub(r"\(decimal\)(\d+)", r"todecimal(\1)", namify)
-                namify = re.sub(r"\(decimal\?\)(\d+)",
-                                r"todecimal(\1)", namify)
+                namify = re.sub(r'\(decimal\) (\d+)', r'todecimal(\1)', namify)
 
                 # Replace function keys
                 function_mapping = {
@@ -428,7 +438,7 @@ if __name__ == "__main__":
                         join_kql_output += '// "cross join" is not a valid join\n'
                         continue
 
-                    join_kql_output += f'{tab}| join kind="'
+                    join_kql_output += f'{tab}| join kind='
 
                     join_mapping = {
                         "inner join": "inner",
@@ -441,7 +451,7 @@ if __name__ == "__main__":
                     }
 
                     if j_kind in join_mapping:
-                        join_kql_output += join_mapping[j_kind] + '" '
+                        join_kql_output += join_mapping[j_kind] + ' '
 
                     # Get variables from `project`
                     project_keys = list(
@@ -560,7 +570,8 @@ if __name__ == "__main__":
         # Print order
         
         if main_table == "":
-            kql_output = "// NO TABLE WAS FOUND\n"
+            if kql_output == "":
+                pass
         else:
             kql_output += (
                 f"{main_table}" +
