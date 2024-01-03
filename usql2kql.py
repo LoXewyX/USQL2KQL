@@ -36,15 +36,19 @@ if __name__ == "__main__":
     # Overwrite the code in case it's not empty
     with open(output_file, "w") as f:
         f.write("")
-        
-    # Remove multiline comments
-    input_code = re.sub(r'/\*.*?\*/', '', input_code, flags=re.DOTALL)
-    # Remove inline comments
-    input_code = re.sub(r'//.*?$', '', input_code, flags=re.MULTILINE)
+    
+    regex_patterns = {
+        r'/\*.*?\*/': '',  # Remove multiline comments
+        r'//.*?$': '',     # Remove inline comments
+        r'\s*,\s*': ', '   # Format correctly commas
+    }
 
+    for pattern, replacement in regex_patterns.items():
+        input_code = re.sub(pattern, replacement, input_code, flags=re.DOTALL | re.MULTILINE)
+    
     input_code = input_code.split(";")[:-1]
     
-    # Sanitize empty lines
+    # Avoid empty lines
     input_code = [item for item in input_code if item != ""]
     
     for code in input_code:
@@ -57,6 +61,8 @@ if __name__ == "__main__":
                 .replace("*", " * ")
                 .replace("/", " / ")
                 .replace(":", " : ")
+                .replace("<", " < ")
+                .replace(">", " > ")
                 .strip()
                 for item in input_list
                 if item.strip()
@@ -292,7 +298,7 @@ if __name__ == "__main__":
                         r"coalesce(\1, \2)",
                         input_str,
                     )
-
+                
                 namify = coalesce(namify)
 
                 def parse_sum_function(line):
@@ -326,25 +332,60 @@ if __name__ == "__main__":
 
                     if assignment_match:
                         result_column = assignment_match.group(1)
-                        case_column = assignment_match.group(2)
-                        pattern = re.compile(
-                            r'WHEN\s+(\S+)\s+THEN\s+("([^"]*)"|\S+)')
-                        when_then_matches = pattern.findall(input_string)
 
-                        cases = tab * 2 + f",\n{tab*3}".join(
-                            f"{case_column} == {when}, {result}"
-                            for when, result, _ in when_then_matches
+                        replace_dict = {
+                            f"{result_column} = CASE WHEN": "case(",
+                            " WHEN": ",",
+                            " THEN ": ", ",
+                            " ELSE ": ", ",
+                            " AND ": " and ",
+                            " OR ": " or ",
+                            " END": "",
+                        }
+
+                        for old_str, new_str in replace_dict.items():
+                            input_string = input_string.replace(old_str, new_str)
+
+                        return (
+                            f"{input_string})"
+                            if input_string.count(",") % 2 == 0
+                            else f"{input_string}, /* else goes here */)"
                         )
 
-                        return result_column + " = case(\n{}\n{})".format(
-                            tab + cases, tab * 2
-                        )
                     else:
                         return "Invalid input: Unable to determine column name"
 
                 if all(string in namify for string in ("CASE", "WHEN", "THEN")):
                     namify = case(namify)
 
+                # Properties
+                tail_dict = {
+                    ".Length": "strlen",
+                    " IS NULL": "isnull",
+                    " IS NOT NULL": "isnotnull",
+                }
+
+                def replace_tail(text):
+                    output_string = text
+
+                    for k, v in tail_dict.items():
+                        pattern = re.compile(r"\b(\w+)" + k + r"\b")
+                        output_string = pattern.sub(
+                            lambda match: f"{v}({match.group(1)})", output_string
+                        )
+
+                        pattern = re.compile(
+                            r"\[(\'\w+.\w+\')\]" + re.escape(k) + r"\b"
+                        )
+                        output_string = pattern.sub(
+                            lambda match: f"strlen([{match.group(1)}])", output_string
+                        )
+
+                    return output_string
+
+                namify = replace_tail(namify)
+
+                # Data typing
                 namify = re.sub(r'\(decimal\) (\d+)', r'todecimal(\1)', namify)
 
                 # Replace function keys
@@ -376,8 +417,7 @@ if __name__ == "__main__":
                     return match.group(0)
 
                 # Define the regex pattern for matching the specified format
-                pattern = re.compile(
-                    r"(\[?\'?[^\'\]]+\'?\]?)\.(\w+)\(([^)]+)\)")
+                pattern = re.compile(r"(\[?\'?[^\'\]]+\'?\]?)\.(\w+)\(([^)]+)\)")
 
                 # Use the sub method to replace matches according to the defined function
                 namify = pattern.sub(replace_match, namify)
@@ -385,20 +425,28 @@ if __name__ == "__main__":
                 # Conditional operator
                 def modify_code(original_code):
                     parts = original_code.split("?")
+                    definition = ""
+                    if re.compile(r"^\w+\s*=\s*").match(parts[0]):
+                        equal_splitted = parts[0].split(" =")
+                        definition = equal_splitted[0] + " ="
+                        function = equal_splitted[1]
+                    else:
+                        function = parts[0]
+                    function = function.replace("['string.IsNullOrEmpty']", "isempty")
                     condition_part = parts[1].split(":")
-                    return (
-                        "iff("
-                        + ", ".join([parts[0], condition_part[0],
-                                    condition_part[1]])
-                        + ")"
+                    return f"{definition} iff" + ", ".join(
+                        [
+                            function.strip(),
+                            condition_part[0].strip(),
+                            condition_part[1].strip(),
+                        ]
                     )
 
                 if "?" in namify and ":" in namify:
                     namify = modify_code(namify)
 
                 project_kql_output += (
-                    tab * 2 + namify +
-                    (",\n" if len(namify_array) != i + 1 else "\n;")
+                    tab * 2 + namify + (",\n" if len(namify_array) != i + 1 else "\n;")
                 )
 
         # Body
@@ -568,7 +616,6 @@ if __name__ == "__main__":
         summarize_by_kql_output += "\n" if summarize_by_kql_output else ""
 
         # Print order
-        
         if main_table == "":
             if kql_output == "":
                 pass
